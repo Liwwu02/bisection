@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>4.1.2 二分法求解隐含波动率动态几何演示</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background-color: #f8fafc;
+            color: #0f172a;
+            padding: 40px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        .container {
+            background: white;
+            border-radius: 16px;
+            padding: 30px;
+            box-shadow: 0 10px 25px -5px rgba(0,0,0,0.05);
+            max-width: 900px;
+            width: 100%;
+            border: 1px solid #e2e8f0;
+        }
+        h1 { font-size: 22px; margin-bottom: 5px; text-align: center; }
+        .subtitle { font-size: 14px; color: #64748b; text-align: center; margin-bottom: 25px; }
+        
+        .control-panel {
+            display: flex;
+            justify-content: space-between;
+            background: #f1f5f9;
+            padding: 15px 20px;
+            border-radius: 12px;
+            margin-bottom: 20px;
+            align-items: center;
+        }
+        .btn {
+            background: #2563eb;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 6px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        .btn:hover { background: #1d4ed8; }
+        .btn:disabled { background: #cbd5e1; cursor: not-allowed; }
+        
+        .status-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 15px;
+            margin-bottom: 25px;
+        }
+        .status-item {
+            background: #f8fafc;
+            border: 1px solid #e2e8f0;
+            padding: 10px;
+            border-radius: 8px;
+            font-size: 13px;
+            color: #475569;
+        }
+        .status-item strong {
+            display: block;
+            font-size: 16px;
+            color: #0f172a;
+            margin-top: 4px;
+            font-family: monospace;
+        }
+        
+        .svg-wrapper {
+            background: #ffffff;
+            border: 1px solid #e2e8f0;
+            border-radius: 12px;
+            padding: 10px;
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>4.1.2 二分法（Bisection Method）数值逼近寻优演示</h1>
+    <div class="subtitle">论文设定：搜索区间 [0.0001, 3.0] • 容差 10⁻⁶ • 动态展示区间折半收敛至真实 IV 的几何过程</div>
+
+    <div class="status-grid">
+        <div class="status-item">当前迭代步数<strong id="step-val">第 0 步 (初始)</strong></div>
+        <div class="status-item">区间下界 (Low)<strong id="low-val">0.0001</strong></div>
+        <div class="status-item">区间上界 (High)<strong id="high-val">3.0000</strong></div>
+        <div class="status-item">中点候选波动率 (Mid)<strong id="mid-val" style="color: #2563eb;">-</strong></div>
+    </div>
+
+    <div class="control-panel">
+        <span id="explain-text" style="font-size: 14px; color: #334155; font-weight: 500;">点击右侧按钮开始模拟数值迭代 ➔</span>
+        <div>
+            <button class="btn" id="next-btn" onclick="nextStep()">下一步迭代</button>
+            <button class="btn" id="reset-btn" onclick="resetDemo()" style="background:#64748b; margin-left:10px;">重置</button>
+        </div>
+    </div>
+
+    <div class="svg-wrapper">
+        <svg viewBox="0 0 800 350" id="main-svg">
+            <line x1="80" y1="175" x2="750" y2="175" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="4,4" /> <line x1="80" y1="320" x2="750" y2="320" stroke="#0f172a" stroke-width="2" /> <line x1="80" y1="320" x2="80" y2="30" stroke="#0f172a" stroke-width="2" /> <text x="700" y="340" font-size="12" fill="#475569" font-weight="bold">候选波动率 σ</text>
+            <text x="90" y="45" font-size="12" fill="#475569" font-weight="bold">价格误差: C_th(σ) - C_mkt</text>
+            <text x="760" y="180" font-size="12" fill="#94a3b8">误差 = 0</text>
+
+            <path d="M 80 290 Q 200 240 320 175 T 650 40" fill="none" stroke="#0f172a" stroke-width="2.5" />
+            
+            <circle cx="320" cy="175" r="5" fill="#10b981" />
+            <line x1="320" y1="175" x2="320" y2="320" stroke="#10b981" stroke-width="1" stroke-dasharray="2,2" />
+            <text x="305" y="335" font-size="11" fill="#10b981" font-weight="bold">真实解 ≈ 0.2017</text>
+
+            <g id="dynamic-group"></g>
+        </svg>
+    </div>
+</div>
+
+<script>
+    // 几何参数映射说明：
+    // 搜索下界 0.0001 对应画布 x=100
+    // 搜索上界 3.0000 对应画布 x=650
+    // 假设方程的真实解在 x=320 处 (即 σ = 0.2017)
+    
+    let step = 0;
+    let lowX = 100;
+    let highX = 650;
+    let midX = 0;
+    const targetX = 320; // 模拟的解
+
+    function getCurveY(x) {
+        // 根据二次曲线近似获取对应的Y值，用来让动态点死死贴在正弦/二次曲线上
+        // M 80 290 Q 200 240 320 175 T 650 40
+        if (x <= 320) {
+            // 前半段贝塞尔曲线模拟
+            let t = (x - 80) / (320 - 80);
+            return 290 * Math.pow(1-t, 2) + 2 * 240 * (1-t) * t + 175 * Math.pow(t, 2);
+        } else {
+            // 后半段单调递增模拟
+            let t = (x - 320) / (650 - 320);
+            return 175 * Math.pow(1-t, 2) + 2 * 110 * (1-t) * t + 40 * Math.pow(t, 2);
+        }
+    }
+
+    function updateSVG() {
+        const group = document.getElementById('dynamic-group');
+        group.innerHTML = ''; // 清空上一帧
+        
+        // 1. 绘制当前的活动上下界红线
+        group.innerHTML += `<line x1="${lowX}" y1="30" x2="${lowX}" y2="320" stroke="#ef4444" stroke-width="1.5" stroke-dasharray="3,3" />`;
+        group.innerHTML += `<text x="${lowX-15}" y="25" font-size="11" fill="#ef4444" font-weight="bold">Low</text>`;
+        
+        group.innerHTML += `<line x1="${highX}" y1="30" x2="${highX}" y2="320" stroke="#ef4444" stroke-width="1.5" stroke-dasharray="3,3" />`;
+        group.innerHTML += `<text x="${highX-15}" y="25" font-size="11" fill="#ef4444" font-weight="bold">High</text>`;
+
+        // 2. 如果已经开始迭代，计算并绘制中点
+        if (step > 0) {
+            midX = (lowX + highX) / 2;
+            let midY = getCurveY(midX);
+
+            // 绘制中点垂线
+            group.innerHTML += `<line x1="${midX}" y1="30" x2="${midX}" y2="320" stroke="#2563eb" stroke-width="2" />`;
+            group.innerHTML += `<text x="${midX-10}" y="20" font-size="12" fill="#2563eb" font-weight="bold">Mid (第${step}步)</text>`;
+
+            // 绘制当前在中点计算出的BS价格误差交互圆点
+            group.innerHTML += `<circle cx="${midX}" cy="${midY}" r="6" fill="#2563eb" />`;
+            
+            // 更新文字面板状态
+            document.getElementById('mid-val').innerText = ((midX - 100) / 180 * 0.1).toFixed(4); // 模拟映射出隐波数值
+            
+            let exp = "";
+            if (midX > targetX) {
+                exp = `【结果偏高】：在中点算出的理论价大于市场价（误差 > 0），说明波动率设高了。下一步把上界（High）移到当前中点。`;
+            } else {
+                exp = `【结果偏低】：在中点算出的理论价小于市场价（误差 < 0），说明波动率设低了。下一步把下界（Low）移到当前中点。`;
+            }
+            if (Math.abs(midX - targetX) < 3) {
+                exp = `【完美收敛】：当前中点的理论价格与市场实际价格差异已小于预设容差 10⁻⁶，迭代成功终止！`;
+                document.getElementById('next-btn').disabled = true;
+            }
+            document.getElementById('explain-text').innerText = exp;
+        }
+
+        // 更新数字面板
+        document.getElementById('step-val').innerText = `第 ${step} 次迭代`;
+        document.getElementById('low-val').innerText = ((lowX - 100) / 180 * 0.1 + 0.0001).toFixed(5);
+        document.getElementById('high-val').innerText = ((highX - 100) / 180 * 0.1 + 0.15).toFixed(5);
+    }
+
+    function nextStep() {
+        if (step === 0) {
+            step = 1;
+        } else {
+            // 二分寻优收敛核心逻辑
+            midX = (lowX + highX) / 2;
+            if (midX > targetX) {
+                highX = midX; // 如果中点在真实解右侧，说明高了，收缩上界
+            } else {
+                lowX = midX; // 反之收缩下界
+            }
+            step++;
+        }
+        updateSVG();
+    }
+
+    function resetDemo() {
+        step = 0;
+        lowX = 100;
+        highX = 650;
+        midX = 0;
+        document.getElementById('next-btn').disabled = false;
+        document.getElementById('mid-val').innerText = '-';
+        document.getElementById('explain-text').innerText = '点击右侧按钮开始模拟数值迭代 ➔';
+        updateSVG();
+    }
+
+    // 初始初始化布局
+    updateSVG();
+</script>
+
+</body>
+</html>
